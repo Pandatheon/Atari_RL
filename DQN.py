@@ -10,11 +10,10 @@ from torch.nn import functional as F
 from torchvision.transforms import v2
 import gym
 
-from utilis import ensure_repo, initialize_weights
+from utilis import initialize_weights
 import Config
 
 
-ensure_repo(Config.seed)
 class CustomCropTransform:
     def __call__(self, img:torch.tensor):
         # roughly captures the playing area 84x84
@@ -96,17 +95,15 @@ class DQNAgent:
 
         self.net = Q_net(packed, env.action_space.n).apply(initialize_weights).to(Config.device)
         self.target_net = Q_net(packed, env.action_space.n).apply(initialize_weights).to(Config.device)
-        self.Optimizer = torch.optim.Adam(self.net.parameters(), self.lr)
+        self.Optimizer = torch.optim.RMSprop(self.net.parameters(), self.lr)
         self.updates = target_update
-        self.C = 0
-        self.act=0
+        self.episode = 0
 
     def take_action(self, state):
         # epsilon-greedy algorithm as Policy
         # annealed linearly from 1 to 0.1
-        epsilon = (1-self.act*10/(Config.epochs*Config.episodes))*\
+        epsilon = (1-self.episode*10/Config.episodes)*\
                   (self.epsilon_list[0]-self.epsilon_list[1])+self.epsilon_list[1]
-        self.act += 1
         if np.random.random() < epsilon:
             action = np.random.randint(self.env.action_space.n)
         else:
@@ -123,17 +120,17 @@ class DQNAgent:
         Q_values = self.net(state)[torch.arange(self.net(state).size(0)), action]
         Q_next_values = self.target_net(next_state).max(dim=1).values
         Q_target = torch.tensor(reward,dtype=torch.float).to(Config.device) +\
-                   self.gamma*Q_next_values*(1 - torch.tensor(done,dtype=torch.float).to(Config.device))
-        DQN_loss = F.mse_loss(Q_values,Q_target)
+                   self.gamma * Q_next_values*(1 - torch.tensor(done,dtype=torch.float).to(Config.device))
+        DQN_loss_sqrt = Q_target-Q_values
 
         # error clipping further improved the stability of the algorithm
-        # DQN_loss = torch.clamp(DQN_loss, -25, 25)
+        DQN_loss_sqrt = torch.clamp(DQN_loss_sqrt, -1, 1)
+        DQN_loss = torch.square(DQN_loss_sqrt).mean()
 
         self.Optimizer.zero_grad()
         DQN_loss.backward()
         self.Optimizer.step()
 
-        self.C +=1
-        if self.C % self.updates == 0:
+        if self.episode % self.updates == 0:
             self.target_net.load_state_dict(self.net.state_dict())
 
