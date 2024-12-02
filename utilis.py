@@ -5,7 +5,7 @@ import os
 import logging
 import yaml
 import datetime
-import sys
+import random
 
 def initialize_weights(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
@@ -18,10 +18,10 @@ def ensure_repo(seed):
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
+    random.seed(seed)
 
 def save_params(args):
-    args.exp_name = args.save_dir + "_" + datetime.datetime.now().strftime("%mM_%dD_%HH") + "_" + \
-                    "{:04d}".format(np.random.randint(0, 1000))
+    args.exp_name = args.save_dir + "_" + datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')
 
     # make file
     if not os.path.exists(os.path.join("exp", args.exp_name)):
@@ -57,17 +57,32 @@ def create_logger(logger_file_path):
     return logger
 
 def save_checkpoint(args, agent, memory_pool):
-    with open(os.path.join("exp", args.exp_name, "pool.txt"), "w") as file:
-        for tpl in memory_pool.pool:
-            file.write(",".join(map(str, tpl)) + "\n")
-    torch.save(agent.net.state_dict(), os.path.join("exp", args.exp_name, 'E{}_net.pt'.format(agent.episode)))
-    torch.save(agent.target_net.state_dict(), os.path.join("exp", args.exp_name, '{}_target_net.pt'.format(agent.episode)))
 
-def continue_checkpoint(args,agent,memory_pool):
+    torch.save(agent.Optimizer.state_dict(),
+               os.path.join("exp", args.exp_name, 'E{}_optimizer.pt'.format(agent.frame_count)))
+    torch.save(agent.net.state_dict(),
+               os.path.join("exp", args.exp_name, 'E{}_net.pt'.format(agent.frame_count)))
+    torch.save(agent.target_net.state_dict(),
+               os.path.join("exp", args.exp_name, '{}_target_net.pt'.format(agent.frame_count)))
+
+    if not os.path.exists(os.path.join("exp", args.exp_name, "buffer")):
+        os.makedirs(os.path.join("exp", args.exp_name, "buffer"))
+
+    state, action, reward, next_state, done = zip(*memory_pool)
+    state = torch.concat(state, dim=0)
+    torch.save(state, os.path.join("exp", args.exp_name, "buffer", '{}_state.pt'.format(agent.frame_count)))
+    next_state = torch.concat(next_state, dim=0)
+    torch.save(next_state, os.path.join("exp", args.exp_name, "buffer", '{}_next_state.pt'.format(agent.frame_count)))
+    action = torch.tensor(reward).view(-1, 1)
+    torch.save(action, os.path.join("exp", args.exp_name, "buffer", '{}_action.pt'.format(agent.frame_count)))
+    reward = torch.tensor(reward).view(-1, 1)
+    torch.save(reward, os.path.join("exp", args.exp_name, "buffer", '{}_reward.pt'.format(agent.frame_count)))
+    done = torch.tensor(done).view(-1, 1)
+    torch.save(done, os.path.join("exp", args.exp_name, "buffer", '{}_done.pt'.format(agent.frame_count)))
+
+def continue_checkpoint(args, agent, memory_pool, frame_count):
     agent.net.load_state_dict(os.path.join("exp", args.exp_name, 'net.pt'))
     agent.target_net.load_state_dict(os.path.join("exp", args.exp_name, 'target_net.pt'))
-    # agent.episode =
-    with open(os.path.join("exp", args.exp_name, "pool.txt"), "w") as file:
-        for line in file:
-            memory_pool.pool.append(tuple(map(int, line.strip().split(","))))
-    file.close()
+    agent.Optimizer.load_state_dict(os.path.join("exp", args.exp_name, 'optimizer.pt'))
+    agent.frame_count = frame_count
+

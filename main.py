@@ -9,27 +9,33 @@ import argparse
 import os
 
 parser = argparse.ArgumentParser("Deep_Q_learning")
-parser.add_argument('--episodes', type=float,
-                    default=Config.episodes, help='Numbers of episodes')
+parser.add_argument('--frames', type=int,
+                    default=Config.frames, help='Numbers of episodes')
 parser.add_argument('--discount', type=float,
                     default=Config.discount_factor, help='Gamma in formula')
-parser.add_argument('--threshold', type=float,
+parser.add_argument('--threshold', type=int,
                     default=Config.threshold, help='threshold for starting update')
 parser.add_argument('--epsilon_init', type=float,
                     default=Config.epsilon[0], help='initial epsilon for policy')
 parser.add_argument('--epsilon_last', type=float,
                     default=Config.epsilon[1], help='epsilon')
-parser.add_argument('--updates', type=float,
+parser.add_argument('--updates', type=int,
                     default=Config.updates, help='Gap for target')
-parser.add_argument('--pool_cap', type=float,
-                    default=Config.pool_cap, help='Capacity of memory pool')
-parser.add_argument('--packed', type=float,
-                    default=Config.packed, help='Number of channels of input')
+parser.add_argument('--exploration_stop', type=int,
+                    default=Config.exploration_stop, help='init learning rate')
+
+parser.add_argument('--buffer_size', type=int,
+                    default=Config.buffer_size, help='Capacity of memory pool')
+parser.add_argument('--input_channel', type=float,
+                    default=Config.input_channel, help='Number of channels of input')
 parser.add_argument('--batch_size', type=int,
                     default=Config.batch_size, help='batch size')
 parser.add_argument('--learning_rate', type=float,
                     default=Config.lr, help='init learning rate')
-parser.add_argument('--seed', type=float,
+
+parser.add_argument('--interval', type=int,
+                    default=Config.interval, help='init learning rate')
+parser.add_argument('--seed', type=int,
                     default=Config.seed, help='seed')
 parser.add_argument('--device', type=str,
                     default=Config.device,help="CUDA oder CPU")
@@ -44,46 +50,48 @@ logger = utilis.create_logger(os.path.join("exp", args.exp_name))
 #################################################
 logger.info('------Begin Training------')
 
-env = gym.make('ALE/Breakout-v5',render_mode='human')
-agent = DQNAgent(env,args.discount,
-                 Config.epsilon, args.learning_rate, args.packed, args.updates)
-memory_pool = replay_memory(args.pool_cap)
+env = gym.make('ALE/Breakout-v5', render_mode='human')
+agent = DQNAgent(env, args.discount,
+                 [args.epsilon_init,args.epsilon_last], args.exploration_stop,
+                 args.input_channel,args.learning_rate, args.updates, args.device)
+memory_pool = replay_memory(args.buffer_size)
 
-utilis.ensure_repo(args.seed)
+return_list = []
+episode_count = 0
 
-episodes_return = []
+while agent.frame_count < args.frames:
+    state = memory_pool.preprocessor(env.reset(seed=args.seed)[0])
+    done = False
+    episodes_return = 0
+    episodes_frame = 0
+    episode_count +=1
+    while not done:
+        episodes_frame +=1
+        # interact
+        action = agent.take_action(state)
+        next_state, reward, done, _, _ = env.step(action)
+        memory_pool.add(state, action, reward, next_state, done)
 
-for j in range(10):
-    for i in range(int(Config.episodes/10)):
-        state=memory_pool.preprocessor(env.reset(seed=args.seed)[0])
-        done = False
-        G = 0
-        C = 0
-        agent.episode += 1
-        while not done:
-            C +=1
-            # interact
-            action = agent.take_action(state.repeat(args.packed,1,1).unsqueeze(dim=0))
-            next_state, reward, done, _, _ = env.step(action)
-            memory_pool.add(state, action, reward, next_state, done)
+        state = memory_pool.preprocessor(next_state)
+        episodes_return += reward
+        agent.frame_count +=1
 
-            state = memory_pool.preprocessor(next_state)
-            G += reward
+        # update
+        if len(memory_pool) > args.threshold:
+            memories = memory_pool.sample(args.batch_size)
+            agent.update(memories)
 
-            # update
-            if len(memory_pool) > args.threshold:
-                memories = memory_pool.sample(args.batch_size)
-                agent.update(memories)
-
-        episodes_return.append(G)
-        logger.info('episode:  {}, episodes_record:  {}, episodes_return:  {}'.format(agent.episode, C, G))
-    utilis.save_checkpoint(args, agent, memory_pool)
+    return_list.append(episodes_return)
+    logger.info('episode:  {}, episodes_record:  {}, episodes_return:  {}'
+                .format(episode_count, episodes_frame, episodes_return))
+    if agent.frame_count % args.interval == 0:
+        utilis.save_checkpoint(args, agent, memory_pool)
 
 logger.info('------End Training------')
 ##############################################
 
 plt.figure(1)
-plt.plot(range(int(Config.episodes)),episodes_return)
+plt.plot(range(episode_count), return_list)
 plt.xlabel("episodes")
 plt.ylabel("scores")
 plt.savefig(os.path.join("exp", args.exp_name, "reward.png"))
