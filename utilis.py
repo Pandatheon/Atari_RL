@@ -7,11 +7,7 @@ import yaml
 import datetime
 import random
 
-def initialize_weights(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
+
 
 def ensure_repo(seed):
     torch.manual_seed(seed)
@@ -19,6 +15,12 @@ def ensure_repo(seed):
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
+
+def initialize_weights(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
 
 def save_params(args):
     args.exp_name = args.save_dir + "_" + datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')
@@ -64,21 +66,18 @@ def save_checkpoint(args, agent, memory_pool):
                os.path.join("exp", args.exp_name, 'E{}_net.pt'.format(agent.frame_count)))
     torch.save(agent.target_net.state_dict(),
                os.path.join("exp", args.exp_name, '{}_target_net.pt'.format(agent.frame_count)))
-
-    if not os.path.exists(os.path.join("exp", args.exp_name, "buffer")):
-        os.makedirs(os.path.join("exp", args.exp_name, "buffer"))
-
     state, action, reward, next_state, done = zip(*memory_pool)
     state = torch.concat(state, dim=0)
-    torch.save(state, os.path.join("exp", args.exp_name, "buffer", '{}_state.pt'.format(agent.frame_count)))
     next_state = torch.concat(next_state, dim=0)
-    torch.save(next_state, os.path.join("exp", args.exp_name, "buffer", '{}_next_state.pt'.format(agent.frame_count)))
     action = torch.tensor(reward).view(-1, 1)
-    torch.save(action, os.path.join("exp", args.exp_name, "buffer", '{}_action.pt'.format(agent.frame_count)))
     reward = torch.tensor(reward).view(-1, 1)
-    torch.save(reward, os.path.join("exp", args.exp_name, "buffer", '{}_reward.pt'.format(agent.frame_count)))
     done = torch.tensor(done).view(-1, 1)
-    torch.save(done, os.path.join("exp", args.exp_name, "buffer", '{}_done.pt'.format(agent.frame_count)))
+    torch_dict={"state": state,
+                "next_state": next_state,
+                "action": action,
+                "reward": reward,
+                "done": done}
+    torch.save(torch_dict, os.path.join("exp", args.exp_name, '{}_buffer.pt'.format(agent.frame_count)))
 
 def continue_checkpoint(args, agent, memory_pool, frame_count):
     agent.net.load_state_dict(os.path.join("exp", args.exp_name, 'net.pt'))

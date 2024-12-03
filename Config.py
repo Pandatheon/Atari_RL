@@ -4,10 +4,10 @@ import torch
 seed = 0
 frames = int(1e+7)
 threshold = int(5e+4)
-exploration_stop = 1e+6
+exploration_stop = int(1e+5)
 discount_factor = 0.99
 epsilon = [1, 0.1]
-buffer_size = int(1e+6)
+buffer_size = int(5e+4)
 interval = 50000
 
 # network training params

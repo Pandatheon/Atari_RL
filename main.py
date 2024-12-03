@@ -54,7 +54,7 @@ env = gym.make('ALE/Breakout-v5', render_mode='human')
 agent = DQNAgent(env, args.discount,
                  [args.epsilon_init,args.epsilon_last], args.exploration_stop,
                  args.input_channel,args.learning_rate, args.updates, args.device)
-memory_pool = replay_memory(args.buffer_size)
+memory_pool = replay_memory(args.buffer_size,args.input_channel)
 
 return_list = []
 episode_count = 0
@@ -74,7 +74,7 @@ while agent.frame_count < args.frames:
 
         state = memory_pool.preprocessor(next_state)
         episodes_return += reward
-        agent.frame_count +=1
+        agent.frame_count += 1
 
         # update
         if len(memory_pool) > args.threshold:
@@ -82,14 +82,15 @@ while agent.frame_count < args.frames:
             agent.update(memories)
 
     return_list.append(episodes_return)
-    logger.info('episode:  {}, episodes_record:  {}, episodes_return:  {}'
-                .format(episode_count, episodes_frame, episodes_return))
+    logger.info('process:  {:.2f}%, episode:  {}, episodes_record:  {}, episodes_return:  {}'
+                .format((agent.frame_count/args.frames)*100, episode_count, episodes_frame, episodes_return))
     if agent.frame_count % args.interval == 0:
         utilis.save_checkpoint(args, agent, memory_pool)
 
 logger.info('------End Training------')
 ##############################################
 
+utilis.save_checkpoint(args, agent, memory_pool)
 plt.figure(1)
 plt.plot(range(episode_count), return_list)
 plt.xlabel("episodes")
