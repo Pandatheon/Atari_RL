@@ -23,7 +23,7 @@ class replay_memory:
     def __init__(self,capacity, input_channel):
         self.preprocessor = v2.Compose([
             v2.ToImage(),
-            v2.ToDtype(torch.float),
+            v2.ToDtype(torch.uint8),
             v2.Grayscale(),
             v2.Resize(size=(110,84)),
             CustomCropTransform()
@@ -32,7 +32,6 @@ class replay_memory:
         self.temp = deque(maxlen=input_channel)
 
     def add(self, state, action, reward, next_state, done):
-        state = self.preprocessor(state)
         next_state = self.preprocessor(next_state)
 
         self.temp.append((state, action, reward, next_state, done))
@@ -47,6 +46,8 @@ class replay_memory:
             action = action[3]
 
             self.pool.append((state, action, reward, next_state, done))
+
+        del state, next_state, action, reward, done
 
     def sample(self, batch_size):
         replays = random.sample(self.pool, batch_size)
@@ -68,10 +69,10 @@ class Q_net(nn.Module):
         self.linear2 = nn.Linear(512, self.out_channel)
 
     def forward(self, x: torch.Tensor):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.linear1(x.flatten(1,3)))
+        x = F.relu(self.conv1(x), inplace=True)
+        x = F.relu(self.conv2(x), inplace=True)
+        x = F.relu(self.conv3(x), inplace=True)
+        x = F.relu(self.linear1(x.flatten(1,3)), inplace=True)
         x = self.linear2(x)
         return x
 
@@ -81,6 +82,7 @@ class DQNAgent:
                  discount_factor: float,
                  epsilon: list,
                  exploration_stop: int,
+                 observance_stop : int,
                  input_channel: int,
                  learning_rate: float,
                  target_update: int,
@@ -94,6 +96,7 @@ class DQNAgent:
         self.epsilon_list = epsilon
         self.input_channel = input_channel
         self.exploration_stop = exploration_stop
+        self.observance_stop = observance_stop
 
         self.device = device
         self.net = Q_net(input_channel, env.action_space.n).apply(initialize_weights).to(self.device)
@@ -106,38 +109,42 @@ class DQNAgent:
         self.update_count = 0
 
     def take_action(self, state):
-        # epsilon-greedy algorithm as Policy
-        # annealed linearly from 1 to 0.1
-        decay = 1-(self.frame_count/self.exploration_stop) if 1-(self.frame_count/self.exploration_stop)>0 else 0
-        epsilon = decay*(self.epsilon_list[0]-self.epsilon_list[1])+self.epsilon_list[1]
 
-        # stack four into one
-        self.temp_frames.append(state)
-        if len(self.temp_frames) < self.input_channel:
-            stacked_state = torch.stack([state] * self.input_channel, dim=1)  # compromise
-        else:
-            stacked_state = torch.stack(list(self.temp_frames), dim=1)  # stack recent 4
-
-        if np.random.random() < epsilon:
+        if self.frame_count < self.observance_stop:
+            # A uniform policy is run
             action = np.random.randint(self.env.action_space.n)
         else:
-            stacked_state = stacked_state.to(self.device)
-            action = self.net(stacked_state).argmax().item()
+            # epsilon-greedy algorithm as Policy, annealed linearly
+            decay = max(0, 1 - (self.frame_count-self.observance_stop) / (self.exploration_stop-self.observance_stop))
+            epsilon = decay*(self.epsilon_list[0]-self.epsilon_list[1])+self.epsilon_list[1]
+
+            # stack four into one
+            self.temp_frames.append(state)
+
+            if np.random.random() < epsilon:
+                action = np.random.randint(self.env.action_space.n)
+            else:
+                # four frames are easy to gather, no need to consider repeat
+                with torch.no_grad():
+                    stacked_state = (torch.stack(list(self.temp_frames), dim=1)/255).to(self.device)  # stack recent 4
+                    action = self.net(stacked_state).argmax().item()
+
         return action
 
     def update(self, replays):
         state, action, reward, next_state, done = zip(*replays)
-        state = torch.concat(state, dim=0).to(self.device)
-        next_state = torch.concat(next_state, dim=0).to(self.device)
-        action = torch.tensor(action,dtype=torch.int64).view(-1,1).to(self.device)
+        state = (torch.concat(state, dim=0)/255).to(self.device)
+        next_state = (torch.concat(next_state, dim=0)/255).to(self.device)
+        action = torch.tensor(action, dtype=torch.int64).view(-1,1).to(self.device)
         reward = torch.tensor(reward,dtype=torch.float).view(-1,1).to(self.device)
         done = torch.tensor(done, dtype=torch.float).view(-1,1).to(self.device)
 
         # a separate network in the Q-learning update.
         Q_values = self.net(state).gather(1, action)
-        Q_next_values = self.target_net(next_state).max(dim=1).values.view(-1,1)
-        Q_target = reward + self.gamma * Q_next_values * (1 - done)
-        DQN_loss = F.huber_loss(Q_values, Q_target)
+        with torch.no_grad():
+            Q_next_values = self.target_net(next_state).max(dim=1).values.view(-1,1)
+            Q_target = reward + self.gamma * Q_next_values * (1 - done)
+        DQN_loss = F.mse_loss(Q_values, Q_target)
 
         self.Optimizer.zero_grad()
         DQN_loss.backward()
