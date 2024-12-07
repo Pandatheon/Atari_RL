@@ -20,7 +20,7 @@ parser.add_argument('--exploration_stop', type=int,
                     default=int(1e+6), help='frame of no exploration')
 
 parser.add_argument('--buffer_size', type=int,
-                    default=int(3e+5), help='Capacity of memory pool')
+                    default=int(1e+5), help='Capacity of memory pool')
 parser.add_argument('--input_channel', type=float,
                     default=4, help='Number of channels of input')
 parser.add_argument('--batch_size', type=int,
@@ -29,7 +29,7 @@ parser.add_argument('--learning_rate', type=float,
                     default=0.00025, help='init learning rate')
 
 parser.add_argument('--interval', type=int,
-                    default=int(4e+6), help='interval for check point')
+                    default=int(2e+6), help='interval for check point')
 parser.add_argument('--seed', type=int,
                     default=0, help='seed')
 parser.add_argument('--device', type=str,
