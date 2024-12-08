@@ -4,7 +4,6 @@
 """
 
 import numpy as np
-import random
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -28,8 +27,12 @@ class replay_memory:
             v2.Resize(size=(110,84)),
             CustomCropTransform()
         ])
-        self.pool = deque(maxlen=capacity)
+        self.capacity = capacity
+        self.state_pool = torch.zeros([capacity,input_channel,84,84],dtype=torch.uint8)
+        self.next_state_pool = torch.zeros([capacity,input_channel,84,84],dtype=torch.uint8)
+        self.act_reward_done = torch.zeros([capacity,3])
         self.temp = deque(maxlen=input_channel)
+        self.index = 0
 
     def add(self, state, action, reward, next_state, done):
         next_state = self.preprocessor(next_state)
@@ -45,16 +48,24 @@ class replay_memory:
             done = done[3]
             action = action[3]
 
-            self.pool.append((state, action, reward, next_state, done))
+            temp_index = (self.index) % self.capacity
+            self.state_pool[temp_index] = state
+            self.next_state_pool[temp_index] = next_state
+            self.act_reward_done[temp_index,:] = torch.tensor([action, reward, done])
+            self.index += 1
 
-        del state, next_state, action, reward, done
 
     def sample(self, batch_size):
-        replays = random.sample(self.pool, batch_size)
+        replays_index = np.random.randint(0, min(self.index, self.capacity), size=batch_size)
+        replays = (self.state_pool[replays_index],
+                   self.act_reward_done[replays_index][:,0],
+                   self.act_reward_done[replays_index][:,1],
+                   self.next_state_pool[replays_index],
+                   self.act_reward_done[replays_index][:,2])
         return replays
 
     def __len__(self):
-        return len(self.pool)
+        return min(self.index, self.capacity)
 
 class Q_net(nn.Module):
     def __init__(self, in_channel, out_channel):
@@ -132,19 +143,19 @@ class DQNAgent:
         return action
 
     def update(self, replays):
-        state, action, reward, next_state, done = zip(*replays)
-        state = (torch.concat(state, dim=0)/255).to(self.device)
-        next_state = (torch.concat(next_state, dim=0)/255).to(self.device)
-        action = torch.tensor(action, dtype=torch.int64).view(-1,1).to(self.device)
-        reward = torch.tensor(reward,dtype=torch.float).view(-1,1).to(self.device)
-        done = torch.tensor(done, dtype=torch.float).view(-1,1).to(self.device)
+        state, action, reward, next_state, done = replays
+        state = (state/255).to(self.device)
+        next_state = (next_state/255).to(self.device)
+        action = action.long().view(-1,1).to(self.device)
+        reward = reward.view(-1,1).to(self.device)
+        done = done.view(-1,1).to(self.device)
 
         # a separate network in the Q-learning update.
         Q_values = self.net(state).gather(1, action)
         with torch.no_grad():
             Q_next_values = self.target_net(next_state).max(dim=1).values.view(-1,1)
             Q_target = reward + self.gamma * Q_next_values * (1 - done)
-        DQN_loss = F.mse_loss(Q_values, Q_target)
+        DQN_loss = F.huber_loss(Q_values, Q_target)
 
         self.Optimizer.zero_grad()
         DQN_loss.backward()
